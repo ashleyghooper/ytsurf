@@ -59,26 +59,26 @@ TMPDIR=""
 # UTILITY FUNCTIONS
 #=============================================================================
 
-fetch_feed(){
-   cacheFeed="$CACHE_DIR/feed.json"
-   if [[ -f "$cacheFeed" ]]&& (( $(date +%s) - $(stat -c "%Y" "$cacheFeed") < 1800 )); then
-     cat "$cacheFeed"
-   else
-     mapfile -t subs < "$SUB_FILE"
-     jsonData=$(printf "%s\n" "${subs[@]}" | shuf | xargs -P 6 -I{} bash -c 'process_channel "$@"' _ {} 2>/dev/null | jq -c '.[]'| shuf | head -n "$limit" | jq -s '.')
-     echo "$jsonData" > "$cacheFeed"
-     echo "$jsonData"
-   fi
+fetch_feed() {
+  cacheFeed="$CACHE_DIR/feed.json"
+  if [[ -f "$cacheFeed" ]] && (($(date +%s) - $(stat -c "%Y" "$cacheFeed") < 1800)); then
+    cat "$cacheFeed"
+  else
+    mapfile -t subs < "$SUB_FILE"
+    json_data=$(printf "%s\n" "${subs[@]}" | shuf | xargs -P 6 -I{} bash -c 'process_channel "$@"' _ {} 2> /dev/null | jq -c '.[]' | shuf | head -n "$limit" | jq -s '.')
+    echo "$json_data" > "$cacheFeed"
+    echo "$json_data"
+  fi
 }
 
-process_channel(){
+process_channel() {
   IFS=',' read -r title channel <<< "$1"
   title=$(xargs <<< "$title")
-  channel=$(xargs <<< "$channel" | jq -nr --arg str "$channel" '$str|@uri' )
+  channel=$(xargs <<< "$channel" | jq -nr --arg str "$channel" '$str|@uri')
   curl -s --compressed --http1.1 --keepalive-time 30 \
-    "https://www.youtube.com/$channel/videos" |
-    sed -n 's/.*var ytInitialData = \(.*\);<\/script>.*/\1/p' |
-    jq --arg author "$title" '
+    "https://www.youtube.com/$channel/videos" \
+    | sed -n 's/.*var ytInitialData = \(.*\);<\/script>.*/\1/p' \
+    | jq --arg author "$title" '
       .contents.twoColumnBrowseResultsRenderer.tabs[1]
       .tabRenderer.content.richGridRenderer.contents
       | map(.richItemRenderer.content.videoRenderer?)
@@ -92,47 +92,45 @@ process_channel(){
           published: .publishedTimeText.simpleText,
           thumbnail: .thumbnail.thumbnails[0].url
       })
-  ' 2>/dev/null
+  ' 2> /dev/null
 }
 export -f process_channel
 
-search_channel(){
-cacheKey=$(echo -n "$query channel" | sha256sum | cut -d' ' -f1)
-cacheFile="$CACHE_DIR/$cacheKey"
+search_channel() {
+  cacheKey=$(echo -n "$query channel" | sha256sum | cut -d' ' -f1)
+  cacheFile="$CACHE_DIR/$cacheKey"
 
-if [[ -f "$cacheFile" ]] && (( $(date +%s) - $(stat -c "%Y" "$cacheFile") < 600 )); then
+  if [[ -f "$cacheFile" ]] && (($(date +%s) - $(stat -c "%Y" "$cacheFile") < 600)); then
     cat "$cacheFile"
-else
-    local jsonData
+  else
+    local json_data
     encodedQuery=$(jq -rn --arg q "$query" '$q|@uri')
-    jsonData=$(curl -s --compressed --http1.1 --keepalive-time 30 "https://www.youtube.com/results?search_query=${encodedQuery}&sp=EgIQAg%3D%3D&hl=en&gl=US" \
-      | sed -n 's/.*var ytInitialData = \(.*\);<\/script>.*/\1/p' \
-      | jq -r '.contents.twoColumnSearchResultsRenderer.primaryContents.sectionListRenderer.contents[0].itemSectionRenderer.contents
+    json_data=$(
+      curl -s --compressed --http1.1 --keepalive-time 30 "https://www.youtube.com/results?search_query=${encodedQuery}&sp=EgIQAg%3D%3D&hl=en&gl=US" \
+        | sed -n 's/.*var ytInitialData = \(.*\);<\/script>.*/\1/p' \
+        | jq -r '.contents.twoColumnSearchResultsRenderer.primaryContents.sectionListRenderer.contents[0].itemSectionRenderer.contents
       | map(.channelRenderer)
       | map({
               channelId: .channelId,
               channelName: .subscriberCountText.simpleText,
-              title:.title.simpleText,
-              thumbnail:("https:"+.thumbnail.thumbnails[0].url),
-              subscribers:.videoCountText.simpleText,
+              title: .title.simpleText,
+              thumbnail: ("https:"+.thumbnail.thumbnails[0].url),
+              subscribers: .videoCountText.simpleText,
            })
           |.[0:5]
-          | map(select(.channelName != null and .subscribers != null))'\
-          2>/dev/null \
+          | map(select(.channelName != null and .subscribers != null))' \
+          2> /dev/null
     )
-    echo "$jsonData" > "$cacheFile"
-    echo "$jsonData"
-fi
+    echo "$json_data" > "$cacheFile"
+    echo "$json_data"
+  fi
 }
 
-
-
-command -v notify-send >/dev/null 2>&1 && notify="true" || notify="false" # check if notify-send is installed
+command -v notify-send > /dev/null 2>&1 && notify="true" || notify="false" # check if notify-send is installed
 # Send notications
 send_notification() {
   if [ "$use_rofi" = false ] && [ "$use_sentaku" = false ]; then
-    [ -z "$2" ] && printf "\33[2K\r\033[1;34m%s\n\033[0m" "$1" && return
-    [ -n "$2" ] && printf "\33[2K\r\033[1;34m%s - %s\n\033[0m" "$1" "$2" && return
+    printf "\33[2K\r\033[1;34m%s%s\n\033[0m" "$1" "${2:+" - $2"}" && return
   fi
   timeout=5000
   if [ "$notify" = "true" ]; then
@@ -145,17 +143,17 @@ send_notification() {
 clip() {
   local url
   url="${*//www.youtube.com\/watch?v=/youtu.be/}"
-  if command -v wl-copy &>/dev/null; then
+  if command -v wl-copy &> /dev/null; then
     printf "%s" "$url" | wl-copy
-  elif command -v xclip &>/dev/null; then
+  elif command -v xclip &> /dev/null; then
     printf "%s" "$url" | xclip -selection clipboard
-  elif command -v xsel &>/dev/null; then
+  elif command -v xsel &> /dev/null; then
     printf "%s" "$url" | xsel --clipboard --input
-  elif command -v pbcopy &>/dev/null; then
+  elif command -v pbcopy &> /dev/null; then
     printf "%s" "$url" | pbcopy
-  elif [[ "$(uname -o 2>/dev/null)" == "Msys" ]] || [[ "$(uname -o 2>/dev/null)" == "Cygwin" ]]; then
-    printf "%s" "$url" >/dev/clipboard
-  elif grep -qi microsoft /proc/version 2>/dev/null; then
+  elif [[ "$(uname -o 2> /dev/null)" == "Msys" ]] || [[ "$(uname -o 2> /dev/null)" == "Cygwin" ]]; then
+    printf "%s" "$url" > /dev/clipboard
+  elif grep -qi microsoft /proc/version; then
     printf "%s" "$url" | powershell.exe Set-Clipboard
   else
     send_notification "Link" "$url"
@@ -170,24 +168,22 @@ create_desktop_entries_channel() {
   [ ! -L "$applications" ] && ln -sf "$TMPDIR/applications/" "$applications"
 
   # Loop through results
-  echo "$jsonData" | jq -c '.[]' | while read -r item; do
+  echo "$json_data" | jq -c '.[]' | while read -r item; do
     local title id thumbnail img_path desktop_file
-    if ! jq -e . >/dev/null 2>&1 <<<"$item"; then
+    if ! jq -e . > /dev/null 2>&1 <<< "$item"; then
       echo "Skipping invalid JSON item" >&2
       break
     fi
     # Check if required fields exist and aren't null
-    title=$(jq -r '.title' <<<"$item")
-    id=$(jq -r '.channelId' <<<"$item")
-    thumbnail=$(jq -r '.thumbnail' <<<"$item")
+    IFS=$'\t' read -r id title thumbnail <<< "$(jq -r '[.channelId, .title, .thumbnail] | @tsv' <<< "$item")"
 
     image_path="$TMPDIR/$id.jpg"
     desktop_file="$TMPDIR/applications/ytsurf-$id.desktop"
 
     # Fetch thumbnail if missing
-    [[ ! -f "$image_path" ]] && curl -fsSL "$thumbnail" -o "$image_path" 2>/dev/null
+    [[ ! -f "$image_path" ]] && curl -fsSL "$thumbnail" -o "$image_path" 2> /dev/null
 
-    cat >"$desktop_file" <<EOF
+    cat > "$desktop_file" << EOF
 [Desktop Entry]
 Name=$title
 Exec=echo $title
@@ -199,7 +195,7 @@ EOF
 }
 
 create_preview_script_fzf_channel() {
-  cat <<'EOF'
+  cat << 'EOF'
 idx=$(($1))
 id=$(echo "$jsonData" | jq -r ".[$idx].channelId" 2>/dev/null)
 title=$(echo "$jsonData" | jq -r ".[$idx].title" 2>/dev/null)
@@ -208,13 +204,13 @@ subscribers=$(echo "$jsonData" | jq -r ".[$idx].subscribers" 2>/dev/null)
 thumbnail=$(echo "$jsonData" | jq -r ".[$idx].thumbnail" 2>/dev/null)
 EOF
 
-  cat <<'EOF'
+  cat << 'EOF'
     echo -e "\033[1;36mTitle:\033[0m \033[1m$title\033[0m"
     echo -e "\033[1;33mChannel Name:\033[0m $channelName"
     echo -e "\033[1;32mSubscribers:\033[0m $subscribers"
     echo
     echo
-    
+
     if command -v chafa &>/dev/null; then
         img_path="$TMPDIR/$id.jpg"
         [[ ! -f "$img_path" ]] && curl -fsSL --compressed --http1.1 --keepalive-time 30  "$thumbnail" -o "$img_path" 2>/dev/null
@@ -230,7 +226,6 @@ EOF
 EOF
 }
 
-
 create_desktop_entries() {
   local json_data="$1"
 
@@ -238,59 +233,59 @@ create_desktop_entries() {
   mkdir -p "$applications"
   [ ! -L "$applications" ] && ln -sf "$TMPDIR/applications/" "$applications"
 
-  # Loop through results
-  echo "$json_data" | jq -c '.[]' | while read -r item; do
-    local title id thumbnail img_path desktop_file
-    if ! jq -e . >/dev/null 2>&1 <<<"$item"; then
-      echo "Skipping invalid JSON item" >&2
-      break
-    fi
-    # Check if required fields exist and aren't null
-    title=$(jq -r '.title' <<<"$item")
-    id=$(jq -r '.id' <<<"$item")
-    thumbnail=$(jq -r '.thumbnail' <<<"$item")
+  # Validate and loop over results
+  echo "$json_data" | jq -r '.[] |
+    select(
+      type == "object" and
+      (.id != null) and
+      (.title | type == "string") and
+      (.thumbnail | type == "string")
+    ) |
+    [.title, .id, .thumbnail, .published] | @tsv' \
+    | xargs -d $'\n' -L 1 -P 15 bash -c '
+TMPDIR='"$TMPDIR"'
+# shellcheck disable=SC2016
+IFS=$'\''\t'\'' read -r title id thumbnail published <<< "$1"
+image_path="$TMPDIR/thumb_$id.jpg"
+desktop_file="$TMPDIR/applications/ytsurf-$id.desktop"
 
-    image_path="$TMPDIR/thumb_$id.jpg"
-    desktop_file="$TMPDIR/applications/ytsurf-$id.desktop"
+# Fetch thumbnail if missing
+[[ ! -f "$image_path" ]] && curl -fsSL --compressed --http1.1 --keepalive-time 30 "$thumbnail" -o "$image_path" 2> /dev/null
 
-    # Fetch thumbnail if missing
-    [[ ! -f "$image_path" ]] && curl -fsSL --compressed --http1.1 --keepalive-time 30 "$thumbnail" -o "$image_path" 2>/dev/null
-
-    cat >"$desktop_file" <<EOF
+cat > "$desktop_file" << EOF
 [Desktop Entry]
-Name=$title
+Name=$title ($published)
 Exec=echo $title
 Icon=$image_path
 Type=Application
 Categories=ytsurf;
 
-EOF
-  done
+EOF' _ # Don't remove this underscore!
 }
 
 # Print help message
 print_help() {
-  cat <<EOF
+  cat << EOF
 $SCRIPT_NAME - search, stream, or download YouTube videos from your terminal 🎵📺
 
 USAGE:
   $SCRIPT_NAME [OPTIONS] [QUERY]
 
 OPTIONS:
-  --audio         Play/download audio-only version
-  --download      Download instead of playing
-  --format        Interactively choose format/resolution
-  --rofi          Use rofi instead of fzf for menus
-  --syncplay      Watch youtube with friend from the terminal
-  --subscribe, -s Add a channel to the subs.txt
-  --feed,-F       View videos from your feed
-  --sentaku       Use sentaku instead of fzf or rofi(for system that can't compile go)
-  --history       Show and replay from viewing history
-  --limit <N>     Limit number of search results (default: $DEFAULT_LIMIT)
-  --edit, -e      edit the configuration file
-  --help, -h      Show this help message
-  --version       Show version info
-  --copy-url      Copy or display the video link
+  --audio          Play/download audio-only version
+  --download       Download instead of playing
+  --format         Interactively choose format/resolution
+  --rofi           Use rofi instead of fzf for menus
+  --syncplay       Watch YouTube with friend from the terminal
+  --subscribe, -S  Add a channel to the sub.txt
+  --feed, -F       View videos from your feed
+  --sentaku        Use sentaku instead of fzf or rofi (for systems that can't compile go)
+  --history        Show and replay from viewing history
+  --limit <N>      Limit number of search results (default: $DEFAULT_LIMIT)
+  --edit, -e       edit the configuration file
+  --help, -h       Show this help message
+  --version        Show version info
+  --copy-url       Copy or display the video link
 
 CONFIG:
   $CONFIG_FILE can contain default options like:
@@ -308,8 +303,10 @@ EOF
 
 update_script() {
   which_ytsurf="$(command -v ytsurf)"
-  [ -z "$which_ytsurf" ] && send_notification "Can't find lobster in PATH"
-  [ -z "$which_ytsurf" ] && exit 1
+  [ -z "$which_ytsurf" ] && (
+    send_notification "Can't find ytsurf in PATH"
+    exit 1
+  )
   update=$(curl -s "https://raw.githubusercontent.com/Stan-breaks/ytsurf/main/ytsurf.sh" || exit 1)
   update="$(printf '%s\n' "$update" | diff -u "$which_ytsurf" -)"
   if [ -z "$update" ]; then
@@ -330,7 +327,7 @@ print_version() {
 }
 
 edit_config() {
-  command -v "$editor" >/dev/null 2>&1 || editor="nano"
+  command -v "$editor" > /dev/null 2>&1 || editor="nano"
   "$editor" "$CONFIG_FILE"
   exit 0
 }
@@ -338,12 +335,12 @@ edit_config() {
 # configuration
 configuration() {
   mkdir -p "$CACHE_DIR" "$CONFIG_DIR"
-  [ -f "$HISTORY_FILE" ] || echo "[]" >"$HISTORY_FILE"
+  [ -f "$HISTORY_FILE" ] || echo "[]" > "$HISTORY_FILE"
   [ -f "$SUB_FILE" ] || touch "$SUB_FILE"
   # shellcheck source=/home/stan/.config/ytsurf/config
 
   if [ ! -f "$CONFIG_FILE" ]; then
-    cat >"$CONFIG_FILE" <<'EOF'
+    cat > "$CONFIG_FILE" << 'EOF'
 #limit=10
 #audio_only=false
 #use_rofi=false
@@ -364,7 +361,7 @@ EOF
 
 # Setup cleanup trap
 setup_cleanup() {
-  TMPDIR=$(mktemp -d 2>/dev/null || mktemp -d -t ytsurf.XXXXXX)
+  TMPDIR=$(mktemp -d 2> /dev/null || mktemp -d -t ytsurf.XXXXXX)
   trap 'rm -rf "$TMPDIR"' EXIT
 }
 
@@ -374,22 +371,22 @@ check_dependencies() {
 
   # Required dependencies
 
-  local required_deps=("yt-dlp" "mpv" "jq" "curl" "perl")
+  local required_deps=("yt-dlp" "mpv" "jq" "curl" "perl" "xargs")
   [ "$player" == "syncplay" ] && required_deps+=("syncplay")
 
   for dep in "${required_deps[@]}"; do
-    if ! command -v "$dep" &>/dev/null; then
+    if ! command -v "$dep" &> /dev/null; then
       missing_deps+=("$dep")
     fi
   done
 
   # Menu system dependency (at least one required)
-  if ! command -v "fzf" &>/dev/null && ! command -v "rofi" &>/dev/null && ! command -v "sentaku" &>/dev/null; then
+  if ! command -v "fzf" &> /dev/null && ! command -v "rofi" &> /dev/null && ! command -v "sentaku" &> /dev/null; then
     missing_deps+=("fzf or rofi or sentaku")
   fi
 
   # Thumbnail dependency (optional but recommended)
-  if ! command -v "chafa" &>/dev/null; then
+  if ! command -v "chafa" &> /dev/null; then
     send_notification "Warning" "chafa not found - thumbnails will not be displayed"
   fi
 
@@ -405,74 +402,74 @@ check_dependencies() {
 parse_arguments() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
-    --help | -h)
-      print_help
-      exit 0
-      ;;
-    --version | -V)
-      send_notification "Ytsurf" "$SCRIPT_VERSION"
-      exit 0
-      ;;
-    --rofi)
-      use_rofi=true
-      shift
-      ;;
-    --sentaku)
-      use_sentaku=true
-      shift
-      ;;
-    --audio)
-      audio_only=true
-      shift
-      ;;
-    --history)
-      history_mode=true
-      shift
-      ;;
-    --download | -d)
-      download_mode=true
-      shift
-      ;;
-    --syncplay)
-      player="syncplay"
-      shift
-      ;;
-    --format | -f)
-      format_selection=true
-      shift
-      ;;
-    --feed | -F)
-      feed_mode=true 
-      shift 
-      ;;
-    --subscribe| -S)
-      sub_mode=true
-      shift 
-      ;;
-    --copy-url)
-      copy_mode=true
-      shift
-      ;;
-    --limit | -l)
-      shift
-      if [[ -n "${1:-}" && "$1" =~ ^[0-9]+$ ]]; then
-        limit="$1"
+      --help | -h)
+        print_help
+        exit 0
+        ;;
+      --version | -V)
+        send_notification "ytsurf" "$SCRIPT_VERSION"
+        exit 0
+        ;;
+      --rofi)
+        use_rofi=true
         shift
-      else
-        send_notification "Error" "--limit requires a number"
-        exit 1
-      fi
-      ;;
-    --edit | -e)
-      edit_config
-      ;;
-    --update | -u)
-      update_script
-      ;;
-    *)
-      query="$*"
-      break
-      ;;
+        ;;
+      --sentaku)
+        use_sentaku=true
+        shift
+        ;;
+      --audio)
+        audio_only=true
+        shift
+        ;;
+      --history)
+        history_mode=true
+        shift
+        ;;
+      --download | -d)
+        download_mode=true
+        shift
+        ;;
+      --syncplay)
+        player="syncplay"
+        shift
+        ;;
+      --format | -f)
+        format_selection=true
+        shift
+        ;;
+      --feed | -F)
+        feed_mode=true
+        shift
+        ;;
+      --subscribe | -S)
+        sub_mode=true
+        shift
+        ;;
+      --copy-url)
+        copy_mode=true
+        shift
+        ;;
+      --limit | -l)
+        shift
+        if [[ -n "${1:-}" && "$1" =~ ^[0-9]+$ ]]; then
+          limit="$1"
+          shift
+        else
+          send_notification "Error" "--limit requires a number"
+          exit 1
+        fi
+        ;;
+      --edit | -e)
+        edit_config
+        ;;
+      --update | -u)
+        update_script
+        ;;
+      *)
+        query="$*"
+        break
+        ;;
     esac
   done
 }
@@ -481,50 +478,49 @@ parse_arguments() {
 # Subscribe
 #=============================================================================
 
-subscribe(){
+subscribe() {
   get_search_query
-  jsonData=$(search_channel)
-  export jsonData TMPDIR
-  menuList=()
-  mapfile -t menuList < <(echo "$jsonData" | jq -r '.[].title' 2>/dev/null)
+  json_data=$(search_channel)
+  export json_data TMPDIR
+  menu_list=()
+  mapfile -t menu_list < <(echo "$json_data" | jq -r '.[].title' 2> /dev/null)
 
-  if [[ "$use_rofi" == true ]];then
-    create_desktop_entries_channel 
-    selected_item=$(select_with_rofi_drun)
+  if [[ "$use_rofi" == true ]]; then
+    create_desktop_entries_channel
+    selected_item=$(select_with_rofi_drun Channels)
     rm -rf "$TMPDIR/applications"
-  elif [[ "$use_sentaku" == true ]];then
+  elif [[ "$use_sentaku" == true ]]; then
     selected_item=$(printf "%s\n" "${menu_items[@]}" | sed 's/ /␣/g' | sentaku)
     selected_item=${selected_item//␣/ }
   else
-    echo "$jsonData"
-    previewScript=$(create_preview_script_fzf_channel)
-    selected_item=$(printf "%s\n" "${menuList[@]}" | fzf \
-          --prompt="search channel" \
-          --preview="bash -c '$previewScript' -- {n}")
+    echo "$json_data"
+    preview_script=$(create_preview_script_fzf_channel)
+    selected_item=$(printf "%s\n" "${menu_list[@]}" | fzf \
+      --prompt="search channel" \
+      --preview="bash -c '$preview_script' -- {n}")
   fi
   [ -n "$selected_item" ] || {
-    send_notification "Error" "No selection made."
+    send_notification "Error" "No selection made"
     exit 1
   }
   idx=-1
-  for i in "${!menuList[@]}"; do
-      if [[ "${menuList[$i]}" == "$selected_item" ]]; then
-          idx=$i
-          break
-      fi
+  for i in "${!menu_list[@]}"; do
+    if [[ "${menu_list[$i]}" == "$selected_item" ]]; then
+      idx=$i
+      break
+    fi
   done
   [[ "$idx" -eq -1 ]] && exit 0
-  name=$(echo "$jsonData" | jq -r ".[$idx].channelName")
+  name=$(echo "$json_data" | jq -r ".[$idx].channelName")
   line="$selected_item,$name"
 
   if ! grep -Fxq "$line" "$SUB_FILE"; then
     echo "$line" >> "$SUB_FILE"
     send_notification "$SCRIPT_NAME" "Subscribed to $name"
   else
-    send_notification "$SCRIPT_NAME" "Aleardy Subscribed to $selected_item"
+    send_notification "$SCRIPT_NAME" "Already subscribed to $selected_item"
   fi
   query=""
-  STATE=EXIT;
 }
 
 #=============================================================================
@@ -535,7 +531,7 @@ select_action() {
   local chosen_action
   local prompt="Select Action:"
   local header="Available Actions"
-  local items=("watch" "download" "watch_with_friends")
+  local items=("Watch" "Download" "Watch with friends")
 
   if [[ "$use_rofi" == true ]]; then
     chosen_action=$(printf "%s\n" "${items[@]}" | rofi -dmenu -p "$prompt" -mesg "$header")
@@ -545,9 +541,9 @@ select_action() {
     chosen_action=$(printf "%s\n" "${items[@]}" | fzf --prompt="$prompt" --header="$header")
   fi
 
-  if [[ "$chosen_action" == "watch" ]]; then
+  if [[ "$chosen_action" == "Watch" ]]; then
     echo false
-  elif [[ "$chosen_action" == "watch_with_friends" ]];then
+  elif [[ "$chosen_action" == "Watch with friends" ]]; then
     player="syncplay"
     echo false
 
@@ -574,7 +570,7 @@ select_format() {
 
   # Get available formats
   local format_list
-  if ! format_list=$(yt-dlp -F "$video_url" 2>/dev/null); then
+  if ! format_list=$(yt-dlp -F "$video_url" 2> /dev/null); then
     echo "Error: Could not retrieve formats for the selected video." >&2
     return 1
   fi
@@ -636,16 +632,16 @@ perform_action() {
   local format_code=""
   if [[ "$format_selection" = true ]]; then
     if ! format_code=$(select_format "$video_url"); then
-      send_notification "Format selection cancelled."
+      send_notification "Format selection cancelled"
       return 1
     fi
   fi
 
   if [[ "$download_mode" = true ]]; then
-    send_notification "Ytsurf" "Downloading to $selected_title" "$img_path"
+    send_notification "ytsurf" "Downloading to $selected_title" "$img_path"
     download_video "$video_url" "$format_code"
   else
-    send_notification "Ytsurf" "Playing $selected_title" "$img_path"
+    send_notification "ytsurf" "Playing $selected_title" "$img_path"
     play_video "$video_url" "$format_code"
   fi
 
@@ -661,7 +657,7 @@ download_video() {
   local format_code="$2"
 
   mkdir -p "$download_dir"
-  send_notification "Ytsurf" "Downloading to $download_dir..."
+  send_notification "ytsurf" "Downloading to $download_dir..."
 
   local yt_dlp_args=(
     -o "$download_dir/%(title)s [%(id)s].%(ext)s"
@@ -685,20 +681,20 @@ play_video() {
   local format_code="$2"
 
   case "$player" in
-  mpv)
-    local mpv_args=(--really-quiet)
-    [ "$audio_only" == "true" ] && mpv_args+=(--no-video)
-    [ -n "$format_code" ] && mpv_args+=(--ytdl-format="$format_code")
-    "$player" "${mpv_args[@]}" "$video_url"
-    ;;
-  syncplay)
-    [ "$audio_only" == "true" ] && {
-      send_notification "Error" "no support for audio only for syncplay for now"
-      exit 1
-    }
-    "$player" "$video_url"
-    exit 0
-    ;;
+    mpv)
+      local mpv_args=(--really-quiet)
+      [ "$audio_only" == "true" ] && mpv_args+=(--no-video)
+      [ -n "$format_code" ] && mpv_args+=(--ytdl-format="$format_code")
+      "$player" "${mpv_args[@]}" "$video_url"
+      ;;
+    syncplay)
+      [ "$audio_only" == "true" ] && {
+        send_notification "Error" "no support for audio only for syncplay for now"
+        exit 1
+      }
+      "$player" "$video_url"
+      exit 0
+      ;;
   esac
 }
 
@@ -719,8 +715,8 @@ add_to_history() {
   tmp_history="$(mktemp)"
 
   # Validate existing JSON
-  if ! jq empty "$HISTORY_FILE" 2>/dev/null; then
-    echo "[]" >"$HISTORY_FILE"
+  if ! jq empty "$HISTORY_FILE" 2> /dev/null; then
+    echo "[]" > "$HISTORY_FILE"
   fi
 
   # Create new entry and merge with existing history
@@ -747,7 +743,7 @@ add_to_history() {
         } as $new_entry |
         ([$new_entry] + ($existing[0] | map(select(.id != $id)))) |
         .[0:$max_entries]
-        ' >"$tmp_history"
+        ' > "$tmp_history"
 
   # Atomic move
   mv "$tmp_history" "$HISTORY_FILE"
@@ -755,39 +751,39 @@ add_to_history() {
 
 handle_history() {
   [ -z "$HISTORY_FILE" ] && {
-    send_notification "Error" "No viewing history found."
+    send_notification "Error" "No viewing history found"
     exit 1
   }
 
   local json_data
-  if ! json_data=$(cat "$HISTORY_FILE" 2>/dev/null); then
-    send_notification "Error" "Could not read history file." >&2
+  if ! json_data=$(cat "$HISTORY_FILE" 2> /dev/null); then
+    send_notification "Error" "Could not read history file"
     exit 1
   fi
 
   local history_titles=()
   local history_ids=()
 
-  mapfile -t history_ids < <(echo "$json_data" | jq -r '.[].id' 2>/dev/null)
-  mapfile -t history_titles < <(echo "$json_data" | jq -r '.[].title' 2>/dev/null)
+  mapfile -t history_ids < <(echo "$json_data" | jq -r '.[].id' 2> /dev/null)
+  mapfile -t history_titles < <(echo "$json_data" | jq -r '.[].title' 2> /dev/null)
 
   if [[ ${#history_titles[@]} -eq 0 ]]; then
-    send_notification "Error" "History is empty or corrupted."
+    send_notification "Error" "History is empty or corrupted"
     exit 1
   fi
 
   # Select from history
   if [[ "$use_rofi" == true ]]; then
     create_desktop_entries "$json_data"
-    selected_title=$(select_with_rofi_drun)
+    selected_title=$(select_with_rofi_drun Videos)
     rm -rf "$TMPDIR/applications"
 
   else
-      selected_title=$(select_from_menu "${history_titles[@]}" "Watch history:" "$json_data" true)
+    selected_title=$(select_from_menu "${history_titles[@]}" "Watch history:" "$json_data" true)
   fi
 
   [ -z "$selected_title" ] && {
-    send_notification "Error" "No selection made."
+    send_notification "Error" "No selection made"
     exit 1
   }
 
@@ -842,8 +838,8 @@ get_search_query() {
   fi
 
   if [[ -z "$query" ]]; then
-    echo "No query entered. Exiting."
-    exit 1
+    echo "No query entered."
+    return 1
   fi
 }
 
@@ -856,7 +852,7 @@ fetch_search_results() {
   cache_file="$CACHE_DIR/$cache_key.json"
 
   # Check cache (10 minute expiry)
-  if [[ -f "$cache_file" && $(find "$cache_file" -mmin -10 2>/dev/null) ]]; then
+  if [[ -f "$cache_file" && $(find "$cache_file" -mmin -10 2> /dev/null) ]]; then
     cat "$cache_file"
     return 0
   fi
@@ -866,8 +862,8 @@ fetch_search_results() {
   encoded_query=$(printf '%s' "$search_query" | jq -sRr @uri)
 
   json_data=$(curl -s --compressed --http1.1 --keepalive-time 30 "https://www.youtube.com/results?search_query=${encoded_query}&sp=EgIQAQ%253D%253D&hl=en&gl=US" \
-    | perl -0777 -ne 'print $1 if /var ytInitialData = (.*?);\s*<\/script>/s'\
-    | jq -r "
+    | perl -0777 -ne 'print $1 if /var ytInitialData = (.*?);\s*<\/script>/s' \
+    | jq -c -r "
       [
         .. | objects |
         select(has(\"videoRenderer\")) |
@@ -881,9 +877,9 @@ fetch_search_results() {
           thumbnail: (.thumbnail.thumbnails | sort_by(.width) | last.url)
         }
       ] | .[:${limit}]
-      " 2>/dev/null)
+      " 2> /dev/null)
 
-  echo "$json_data" >"$cache_file"
+  echo "$json_data" > "$cache_file"
   echo "$json_data"
 
 }
@@ -891,9 +887,10 @@ fetch_search_results() {
 create_preview_script_fzf() {
   local is_history="${1:-false}"
 
-  cat <<'EOF'
+  cat << 'EOF'
 printf "\033[H\033[J"
 idx=$(($1))
+
 id=$(echo "$json_data" | jq -r ".[$idx].id" 2>/dev/null)
 title=$(echo "$json_data" | jq -r ".[$idx].title" 2>/dev/null)
 duration=$(echo "$json_data" | jq -r ".[$idx].duration" 2>/dev/null)
@@ -911,7 +908,7 @@ EOF
     printf 'echo -e "\033[1;35mFrom History\033[0m" \n'
   fi
 
-  cat <<'EOF'
+  cat << 'EOF'
     echo -e "\033[1;36mTitle:\033[0m \033[1m$title\033[0m"
     echo -e "\033[1;33mDuration:\033[0m $duration"
     echo -e "\033[1;32mViews:\033[0m $views"
@@ -919,7 +916,7 @@ EOF
     echo -e "\033[1;34mUploaded:\033[0m $published"
     echo
     echo
-    
+
     if command -v chafa &>/dev/null; then
         img_path="$TMPDIR/thumb_$id.jpg"
         [[ ! -f "$img_path" ]] && curl -fsSL --compressed --http1.1 --keepalive-time 30 "$thumbnail" -o "$img_path" 2>/dev/null
@@ -940,7 +937,8 @@ EOF
 }
 
 select_with_rofi_drun() {
-  rofi_out=$(rofi -show drun -drun-categories ytsurf -filter "" -show-icons)
+  local display_drun=$1
+  rofi_out=$(rofi -show drun -display-drun "$display_drun" -drun-categories ytsurf -filter "" -show-icons)
   echo "$rofi_out"
 }
 
@@ -962,12 +960,13 @@ select_from_menu() {
   export json_data TMPDIR
 
   local selected_item=""
-  if [[ "$use_sentaku" == true ]] && command -v sentaku &>/dev/null; then
+  if [[ "$use_sentaku" == true ]] && command -v sentaku &> /dev/null; then
     selected_item=$(printf "%s\n" "${menu_items[@]}" | sed 's/ /␣/g' | sentaku)
     selected_item=${selected_item//␣/ }
 
-  elif command -v fzf &>/dev/null; then
+  elif command -v fzf &> /dev/null; then
     local preview_script
+
     preview_script=$(create_preview_script_fzf "$is_history")
 
     selected_item=$(printf "%s\n" "${menu_items[@]}" | fzf \
@@ -978,31 +977,30 @@ select_from_menu() {
 }
 
 handle_selection() {
-  [[ "$feed_mode" == "true" ]] && {
+  if [[ "$feed_mode" == "true" ]]; then
     json_data=$(fetch_feed)
-    [[ "$json_data" == "[]" ]] && {
+    if [[ "$json_data" == "[]" ]]; then
       send_notification "Error" "Failed to fetch your feed"
       exit 1
-    }
-  }
-  [[ "$feed_mode" == "true" ]] || {
-     get_search_query
-     json_data=$(fetch_search_results "$query") || {
-        send_notification "Error" "Failed to fetch search results for '$query'"
-        exit 1
-     }
-  } 
+    fi
+  else
+    get_search_query
+    if ! json_data=$(fetch_search_results "$query"); then
+      send_notification "Error" "Failed to fetch search results for '$query'"
+      exit 1
+    fi
+  fi
 
   local menu_list=()
-  mapfile -t menu_list < <(echo "$json_data" | jq -r '.[].title' 2>/dev/null)
+  mapfile -t menu_list < <(echo "$json_data" | jq -r '.[].title' 2> /dev/null)
 
   if [[ "$use_rofi" == true ]]; then
     create_desktop_entries "$json_data"
-    selected_title=$(select_with_rofi_drun)
+    selected_title=$(select_with_rofi_drun Search results)
     rm -rf "$TMPDIR/applications"
 
   else
-      [ ${#menu_list[@]} -eq 0 ] && {
+    [ ${#menu_list[@]} -eq 0 ] && {
       send_notification "Error" "No results found for '$query'"
       exit 0
     }
@@ -1010,7 +1008,7 @@ handle_selection() {
   fi
 
   [ -n "$selected_title" ] || {
-    send_notification "Error" "No selection made."
+    send_notification "Error" "No selection made"
     exit 1
   }
 
@@ -1023,19 +1021,15 @@ handle_selection() {
   done
 
   [ "$selected_index" -lt 0 ] && {
-    send_notification "Error" " could not resolve selected video."
+    send_notification "Error" "Could not resolve selected video"
     exit 1
   }
 
   # Extract video details
   local video_id video_author video_duration video_views video_published video_thumbnail
-  video_id=$(echo "$json_data" | jq -r ".[$selected_index].id")
+  IFS=$'\t' read -r video_id video_author video_duration video_views video_published video_thumbnail \
+    <<< "$(jq -r --arg idx "$selected_index" '.[$idx|tonumber] | [.id, .author, .duration, .views, .published, .thumbnail] | @tsv' <<< "$json_data")"
   video_url="https://www.youtube.com/watch?v=$video_id"
-  video_author=$(echo "$json_data" | jq -r ".[$selected_index].author")
-  video_duration=$(echo "$json_data" | jq -r ".[$selected_index].duration")
-  video_views=$(echo "$json_data" | jq -r ".[$selected_index].views")
-  video_published=$(echo "$json_data" | jq -r ".[$selected_index].published")
-  video_thumbnail=$(echo "$json_data" | jq -r ".[$selected_index].thumbnail")
 
   [ "$copy_mode" == "true" ] && {
     clip "$video_url"
@@ -1047,11 +1041,11 @@ handle_selection() {
   STATE="PLAY"
 }
 
-select_init(){
+main_menu() {
   local chosen_action
   local prompt="Select Action:"
   local header="Available Actions"
-  local items=("Search_youtube" "Add_subscription" "Open_your_feed" "View_your_history")
+  local items=("Search YouTube" "Open your feed" "View your history" "Add subscription")
 
   if [[ "$use_rofi" == true ]]; then
     chosen_action=$(printf "%s\n" "${items[@]}" | rofi -dmenu -p "$prompt" -mesg "$header")
@@ -1061,13 +1055,13 @@ select_init(){
     chosen_action=$(printf "%s\n" "${items[@]}" | fzf --prompt="$prompt" --header="$header")
   fi
 
-  if [[ "$chosen_action" == "Add_subscription" ]]; then
+  if [[ "$chosen_action" == "Add subscription" ]]; then
     sub_mode="true"
-  elif [[ "$chosen_action" == "Open_your_feed" ]]; then
+  elif [[ "$chosen_action" == "Open your feed" ]]; then
     feed_mode="true"
-  elif [[ "$chosen_action" == "View_your_history" ]]; then
+  elif [[ "$chosen_action" == "View your history" ]]; then
     history_mode="true"
-  elif [[ "$chosen_action" == "Search_youtube" ]]; then
+  elif [[ "$chosen_action" == "Search YouTube" ]]; then
     STATE="SEARCH"
   else
     send_notification "Error" "no selection made"
@@ -1077,19 +1071,41 @@ select_init(){
 
 # MAIN EXECUTION
 main() {
-  STATE="SEARCH"
-  [[ "$history_mode" != "true" && "$sub_mode" != "true" && "$feed_mode" != "true" && -z "$query" ]] && select_init
-  [ "$history_mode" == "true" ] && STATE="HISTORY"
-  [ "$sub_mode" == "true" ] && STATE="SUB"
   while :; do
-    case "$STATE" in
-    SEARCH) handle_selection ;;
-    SUB) subscribe;;
-    PLAY) perform_action ;;
-    HISTORY) handle_history ;;
-    EXIT) break ;;
-    *) break ;;
-    esac
+    STATE="SEARCH"
+    if [[ $history_mode == true ]]; then
+      STATE="HISTORY"
+    elif [[ $sub_mode == true ]]; then
+      STATE="SUB"
+    else
+      if [[ "$feed_mode" != "true" && -z "$query" ]]; then
+        main_menu
+      fi
+    fi
+
+    while :; do
+      case "$STATE" in
+        SEARCH) handle_selection ;;
+        SUB)
+          subscribe
+          STATE="SEARCH"
+          sub_mode="false"
+          break
+          ;;
+        PLAY)
+          perform_action
+          break
+          ;;
+        HISTORY) handle_history ;;
+        EXIT) break 2 ;;
+        *) break ;;
+      esac
+      # shellcheck disable=SC2181
+      if [[ $? != 0 ]]; then
+        query=""
+        break
+      fi
+    done
   done
 }
 
